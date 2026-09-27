@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>T-Drive · Painel de Aprovação</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --txt:#1c1f24; --muted:#6b7280; --line:#e3e5e8; --ok:#1a7f4b; --no:#b42318; --acc:#1d4ed8; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:16px; border-bottom:1px solid var(--line); background:var(--card); }
+  h1 { margin:0; font-size:18px; }
+  main { max-width:960px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  h2 { margin:0 0 12px; font-size:15px; }
+  .metricas { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:8px; }
+  .metrica { border:1px solid var(--line); border-radius:6px; padding:8px; font-size:13px; }
+  .metrica b { display:block; font-size:16px; margin-top:4px; }
+  .resposta { border:1px solid var(--line); border-radius:6px; padding:12px; margin-bottom:12px; }
+  .meta { color:var(--muted); font-size:12px; margin-bottom:6px; }
+  textarea, input { width:100%; font:inherit; padding:8px; border:1px solid var(--line); border-radius:6px; }
+  textarea { min-height:90px; margin:8px 0; }
+  button { font:inherit; padding:8px 14px; border:0; border-radius:6px; cursor:pointer; color:#fff; background:var(--acc); }
+  .aprovar { background:var(--ok); } .rejeitar { background:var(--no); }
+  .linha { display:flex; gap:8px; flex-wrap:wrap; }
+  .linha input { flex:1; min-width:140px; }
+  .vazio { color:var(--muted); font-size:14px; }
+</style>
+</head>
+<body>
+<header><h1>🚗 T-Drive · Vendedor Virtual — Painel de Aprovação</h1></header>
+<main>
+  <section>
+    <h2>📊 Métricas do Marco 1</h2>
+    <div class="metricas" id="metricas"></div>
+  </section>
+
+  <section>
+    <h2>✅ Respostas aguardando aprovação</h2>
+    <div id="pendentes"></div>
+  </section>
+
+  <section>
+    <h2>💬 Simulador de cliente</h2>
+    <form id="simulador" class="linha">
+      <input name="clienteId" placeholder="Telefone / ID do cliente" required>
+      <input name="mensagem" placeholder="Mensagem do cliente" required style="flex:3">
+      <button>Enviar</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>📅 Agendar visita</h2>
+    <form id="agendar" class="linha">
+      <input name="clienteId" placeholder="ID do cliente" required>
+      <input name="data" type="date" required>
+      <input name="hora" type="time" required>
+      <button>Agendar</button>
+    </form>
+  </section>
+</main>
+<script>
+const api = (url, body) => fetch(url, body === undefined ? {} : {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+}).then(r => r.json());
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+async function carregar() {
+  const [m, p] = await Promise.all([api('/api/metricas'), api('/api/respostas-pendentes')]);
+  document.getElementById('metricas').innerHTML = Object.entries(m.marco1)
+    .map(([k, v]) => `<div class="metrica">${esc(k)}<b>${esc(String(v))}</b></div>`).join('');
+
+  const el = document.getElementById('pendentes');
+  const editando = el.contains(document.activeElement);
+  if (editando) return; // não sobrescrever enquanto o usuário edita
+  el.innerHTML = p.respostas.length ? p.respostas.map(r => `
+    <div class="resposta" data-id="${r.id}">
+      <div class="meta">Cliente ${esc(String(r.clienteId))} · ${new Date(r.criadoEm).toLocaleString('pt-BR')}</div>
+      <div><b>Cliente:</b> ${esc(r.mensagemOriginal)}</div>
+      <textarea>${esc(r.respostaGerada)}</textarea>
+      <div class="linha">
+        <button class="aprovar">Aprovar</button>
+        <button class="rejeitar">Rejeitar</button>
+      </div>
+    </div>`).join('') : '<p class="vazio">Nenhuma resposta pendente.</p>';
+}
+
+document.getElementById('pendentes').addEventListener('click', async e => {
+  const card = e.target.closest('.resposta');
+  if (!card || e.target.tagName !== 'BUTTON') return;
+  const id = card.dataset.id;
+  if (e.target.classList.contains('aprovar')) {
+    await api(`/api/respostas/${id}/aprovar`, { respostaEditada: card.querySelector('textarea').value });
+  } else {
+    await api(`/api/respostas/${id}/rejeitar`, {});
+  }
+  document.activeElement.blur();
+  carregar();
+});
+
+function enviarForm(id, url) {
+  document.getElementById(id).addEventListener('submit', async e => {
+    e.preventDefault();
+    const dados = Object.fromEntries(new FormData(e.target));
+    const r = await api(url, dados);
+    if (r.erro) alert(r.erro);
+    e.target.reset();
+    setTimeout(carregar, 300);
+  });
+}
+enviarForm('simulador', '/api/mensagens');
+enviarForm('agendar', '/api/agendamentos');
+
+carregar();
+setInterval(carregar, 3000);
+</script>
+</body>
+</html>
