@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>T-Drive Vendedor Virtual</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1a1d21; --muted:#6b7280; --line:#e2e5ea; --brand:#0b5fff; --ok:#12805c; --bad:#c62828; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12141a; --card:#1b1e26; --text:#e8eaee; --muted:#9aa1ad; --line:#2c303a; --brand:#4d8dff; --ok:#3cc597; --bad:#ef6f6f; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,sans-serif; }
+  main { max-width:900px; margin:0 auto; padding:16px; display:grid; gap:16px; }
+  h1 { font-size:20px; margin:0; } h2 { font-size:16px; margin:0 0 10px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; }
+  .metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; }
+  .metric { border:1px solid var(--line); border-radius:8px; padding:10px; }
+  .metric b { display:block; font-size:20px; } .metric span { color:var(--muted); font-size:12px; }
+  input, textarea { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--text); font:inherit; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; } .row > * { flex:1 1 140px; }
+  button { padding:8px 14px; border:0; border-radius:6px; background:var(--brand); color:#fff; font:inherit; cursor:pointer; }
+  button.ok { background:var(--ok); } button.bad { background:var(--bad); }
+  .pend { border-top:1px solid var(--line); padding:12px 0; display:grid; gap:8px; }
+  .pend:first-of-type { border-top:0; }
+  .muted { color:var(--muted); font-size:13px; }
+  #toast { color:var(--muted); font-size:13px; min-height:1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🚗 T-Drive Vendedor Virtual <span class="muted">· Painel de aprovação</span></h1>
+
+  <section class="card"><h2>Métricas do Marco 1</h2><div class="metrics" id="metrics"></div></section>
+
+  <section class="card">
+    <h2>Simular mensagem do cliente</h2>
+    <div class="row">
+      <input id="clienteId" placeholder="ID do cliente" value="cliente-1">
+      <input id="mensagem" placeholder="Mensagem" style="flex:3 1 260px" value="Oi, quanto custa o Corolla?">
+      <button id="enviar" style="flex:0 0 auto">Enviar</button>
+    </div>
+  </section>
+
+  <section class="card"><h2>Respostas pendentes <span class="muted" id="count"></span></h2><div id="pendentes"></div></section>
+
+  <section class="card">
+    <h2>Agendar visita</h2>
+    <div class="row">
+      <input id="agCliente" placeholder="ID do cliente" value="cliente-1">
+      <input id="agData" type="date"><input id="agHora" type="time">
+      <button id="agendar" style="flex:0 0 auto">Agendar</button>
+    </div>
+  </section>
+
+  <div id="toast" role="status"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const toast = t => { $('toast').textContent = t; };
+async function api(path, body) {
+  const r = await fetch('/api' + path, body === undefined ? {} : {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.erro || r.statusText);
+  return j;
+}
+async function refresh() {
+  try {
+    const [m, p] = await Promise.all([api('/metricas'), api('/respostas-pendentes')]);
+    $('metrics').innerHTML = Object.entries(m.marco1).map(([k, v]) =>
+      `<div class="metric"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+    $('count').textContent = `(${p.total})`;
+    // não sobrescreve edições em andamento
+    if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
+    $('pendentes').innerHTML = p.respostas.length ? p.respostas.map(r => `
+      <div class="pend" data-id="${r.id}">
+        <div class="muted">Cliente ${esc(r.clienteId)} perguntou:</div>
+        <div>${esc(r.mensagemOriginal)}</div>
+        <textarea rows="4">${esc(r.respostaGerada)}</textarea>
+        <div class="row"><button class="ok" data-a="aprovar">Aprovar</button><button class="bad" data-a="rejeitar">Rejeitar</button></div>
+      </div>`).join('') : '<div class="muted">Nenhuma resposta aguardando aprovação.</div>';
+  } catch (e) { toast('Erro: ' + e.message); }
+}
+$('pendentes').addEventListener('click', async e => {
+  const a = e.target.dataset.a; if (!a) return;
+  const el = e.target.closest('.pend');
+  try {
+    await api(`/respostas/${el.dataset.id}/${a}`, a === 'aprovar' ? { respostaEditada: el.querySelector('textarea').value } : {});
+    toast(a === 'aprovar' ? 'Resposta aprovada.' : 'Resposta rejeitada.');
+    $('pendentes').querySelector('textarea')?.blur();
+    refresh();
+  } catch (err) { toast('Erro: ' + err.message); }
+});
+$('enviar').onclick = async () => {
+  try { await api('/mensagens', { clienteId: $('clienteId').value, mensagem: $('mensagem').value });
+        toast('Mensagem enviada. A resposta aparece em instantes.'); setTimeout(refresh, 2500); }
+  catch (e) { toast('Erro: ' + e.message); }
+};
+$('agendar').onclick = async () => {
+  try { await api('/agendamentos', { clienteId: $('agCliente').value, data: $('agData').value, hora: $('agHora').value });
+        toast('Visita agendada.'); refresh(); }
+  catch (e) { toast('Erro: ' + e.message); }
+};
+refresh(); setInterval(refresh, 5000);
+</script>
+</body>
+</html>
